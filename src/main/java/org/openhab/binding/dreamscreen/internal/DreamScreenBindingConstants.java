@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2014,2018 by the respective copyright holders.
+ * Copyright (c) 2018-2019 by the respective copyright holders.
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information regarding copyright ownership.
@@ -19,7 +19,7 @@ import org.eclipse.smarthome.core.thing.ThingTypeUID;
  * The {@link DreamScreenBindingConstants} class defines common constants, which are
  * used across the whole binding.
  *
- * @author Bruce Brouwer - Initial contribution
+ * @author Bruce Brouwer
  */
 @NonNullByDefault
 public class DreamScreenBindingConstants {
@@ -34,4 +34,5 @@ public class DreamScreenBindingConstants {
     public static final String CHANNEL_MODE = "mode";
     public static final String CHANNEL_SCENE = "scene";
     public static final String CHANNEL_INPUT = "input";
+    public static final String CHANNEL_COLOR = "color";
 }

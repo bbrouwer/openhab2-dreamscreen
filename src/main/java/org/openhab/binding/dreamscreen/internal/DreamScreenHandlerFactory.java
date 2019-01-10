@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2014,2018 by the respective copyright holders.
+ * Copyright (c) 2018-2019 by the respective copyright holders.
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information regarding copyright ownership.
@@ -30,10 +30,9 @@ import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Reference;
 
 /**
- * The {@link DreamScreenHandlerFactory} is responsible for creating things and thing
- * handlers.
+ * The {@link DreamScreenHandlerFactory} is responsible for creating things and thing handlers.
  *
- * @author Bruce Brouwer - Initial contribution
+ * @author Bruce Brouwer
  */
 @NonNullByDefault
 @Component(configurationPid = "binding.dreamscreen", service = ThingHandlerFactory.class)
@@ -47,7 +46,7 @@ public class DreamScreenHandlerFactory extends BaseThingHandlerFactory {
     @Override
     protected void deactivate(ComponentContext componentContext) {
         super.deactivate(componentContext);
-        server.shutdown();
+        server.deactivate();
     };
 
     @Override
@@ -60,7 +59,7 @@ public class DreamScreenHandlerFactory extends BaseThingHandlerFactory {
         final ThingTypeUID thingTypeUID = thing.getThingTypeUID();
 
         if (THING_DREAMSCREEN.equals(thingTypeUID)) {
-            return new DreamScreenHandler(thing, server, descriptionProvider);
+            return new DreamScreenHandler(thing, this.server, this.descriptionProvider);
         }
 
         return null;
@@ -77,10 +76,10 @@ public class DreamScreenHandlerFactory extends BaseThingHandlerFactory {
 
     @Reference
     protected void setNetworkAddressService(NetworkAddressService networkAddressService) {
-        server.setHostAddress(networkAddressService.getPrimaryIpv4HostAddress());
+        this.server.setNetworkAddressService(networkAddressService);
     }
 
     protected void unsetNetworkAddressService(NetworkAddressService networkAddressService) {
-        // nothing to really unset. This just needed to grab the primary IPv4 host address.
+        this.server.unsetNetworkAddressService(networkAddressService);
     }
 }

@@ -1,23 +1,41 @@
+/**
+ * Copyright (c) 2018-2019 by the respective copyright holders.
+ *
+ * See the NOTICE file(s) distributed with this work for additional
+ * information regarding copyright ownership.
+ *
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0
+ *
+ * SPDX-License-Identifier: EPL-2.0
+ */
 package org.openhab.binding.dreamscreen.internal;
 
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
-import java.net.UnknownHostException;
+import java.net.NetworkInterface;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jdt.annotation.NonNull;
 import org.eclipse.jdt.annotation.Nullable;
+import org.eclipse.smarthome.core.net.CidrAddress;
+import org.eclipse.smarthome.core.net.NetworkAddressChangeListener;
+import org.eclipse.smarthome.core.net.NetworkAddressService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-class DreamScreenDatagramServer {
+/**
+ * The {@link DreamScreenDatagramServer} class handles all communications with the DreamScreen devices.
+ *
+ * @author Bruce Brouwer
+ */
+class DreamScreenDatagramServer implements NetworkAddressChangeListener {
     private final static int DREAMSCREEN_PORT = 8888;
     private final static byte[] CRC_TABLE = new byte[] { 0x00, 0x07, 0x0E, 0x09, 0x1C, 0x1B, 0x12, 0x15, 0x38, 0x3F,
             0x36, 0x31, 0x24, 0x23, 0x2A, 0x2D, 0x70, 0x77, 0x7E, 0x79, 0x6C, 0x6B, 0x62, 0x65, 0x48, 0x4F, 0x46, 0x41,
@@ -47,91 +65,53 @@ class DreamScreenDatagramServer {
     private final Logger logger = LoggerFactory.getLogger(DreamScreenHandler.class);
     private final Map<String, DreamScreenHandler> dreamScreens = new ConcurrentHashMap<>();
 
-    private @Nullable DatagramSocket serverSocket;
+    private @Nullable NetworkAddressService networkAddressService;
+    private @Nullable Thread server;
+    private @Nullable DatagramSocket socket;
     private @Nullable InetAddress hostAddress;
     private @Nullable InetAddress broadcastAddress;
-    private @Nullable ScheduledExecutorService scheduler;
-    private @Nullable ScheduledFuture<?> refreshing;
 
-    void register(@NonNull DreamScreenHandler handler, @NonNull ScheduledExecutorService scheduler) throws IOException {
-        dreamScreens.put(handler.getName(), handler);
-        this.scheduler = scheduler;
-        ensureRefreshing();
+    void initialize(@NonNull DreamScreenHandler handler) throws IOException {
+        dreamScreens.put(handler.name, handler);
+        if (!isServerRunning()) {
+            startServer();
+        }
     }
 
-    void unregister(DreamScreenHandler handler) {
-        dreamScreens.remove(handler.getName());
+    void dispose(@NonNull DreamScreenHandler handler) {
+        dreamScreens.remove(handler.name);
         if (dreamScreens.isEmpty()) {
-            stopRefreshing();
+            stopServer();
         }
     }
 
-    void shutdown() {
+    void deactivate() {
         dreamScreens.clear();
-        stopRefreshing();
+        stopServer();
     }
 
-    private synchronized void ensureRefreshing() throws IOException {
-        if (this.broadcastAddress == null) {
-            this.broadcastAddress = InetAddress.getByName("255.255.255.255");
-        }
-        if (this.refreshing == null) {
-            final DatagramSocket socket = new DatagramSocket(DREAMSCREEN_PORT, this.hostAddress);
-            socket.setReuseAddress(true);
-            this.serverSocket = socket;
-
-            final Thread server = new Thread(this::runServer, "dreamscreen-tv");
-            server.setDaemon(true);
-            server.start();
-
-            final ScheduledExecutorService scheduler = this.scheduler;
-            if (scheduler != null) {
-                this.refreshing = scheduler.scheduleAtFixedRate(this::requestRefresh, 0, 10, TimeUnit.SECONDS);
-            } else {
-                logger.error("No scheduler found to refresh DreamScreen TV");
-            }
-        }
-    }
-
-    private void requestRefresh() {
-        try {
-            broadcast(0xFF, 0x30, 0x01, 0x0A, new byte[0]);
-        } catch (IOException e) {
-            logger.error("Error requesting refresh of state", e);
-        }
-    }
-
-    private synchronized void stopRefreshing() {
-        final DatagramSocket socket = this.serverSocket;
-        if (socket != null) {
-            socket.close();
-        }
-        this.serverSocket = null;
-
-        final ScheduledFuture<?> refreshing = this.refreshing;
-        if (refreshing != null) {
-            refreshing.cancel(true);
-        }
-        this.refreshing = null;
-    }
-
-    @SuppressWarnings("null")
     private void runServer() {
-        final byte[] buf = new byte[256];
+        final byte[] data = new byte[256];
+        DatagramSocket socket = this.socket;
 
-        while (serverSocket != null && !serverSocket.isClosed()) {
+        while (socket != null && !socket.isClosed()) {
             try {
-                final DatagramPacket data = new DatagramPacket(buf, buf.length);
-                serverSocket.receive(data);
+                final DatagramPacket packet = new DatagramPacket(data, data.length);
+                socket.receive(packet);
 
-                final int off = data.getOffset();
-                final int len = data.getLength();
+                final int off = packet.getOffset();
+                final int len = packet.getLength();
 
-                logger.info("DreamScreen message: {} {}-{}:{}", data.getAddress(), off, len, buf);
+                logger.trace("DreamScreen message: {} {}-{}:{}", packet.getAddress(), off, len, data);
 
-                if (isValidStateMsg(buf, off, len) && isDreamScreen(buf, off, len)) {
-                    logger.info("Received DreamScreen message from {}", data.getAddress());
-                    refreshDreamScreen(buf, off, len, data.getAddress());
+                if (!packet.getAddress().equals(this.hostAddress) && isValidMsg(data, off, len)) {
+                    logger.debug("Received DreamScreen message from {}: {}, {}", packet.getAddress(), data[off + 4],
+                            data[off + 5]);
+                    if (isRefreshMsg(data, off, len)) {
+                        processRefreshMsg(data, off, len, packet.getAddress());
+                    } else {
+                        processMessage(data, off, len);
+                    }
                 }
             } catch (IOException ioe) {
                 logger.error("Error receiving DreamScreen data", ioe);
@@ -139,39 +119,12 @@ class DreamScreenDatagramServer {
         }
     }
 
-    void setHostAddress(@Nullable String value) {
-        try {
-            this.hostAddress = InetAddress.getByName(value);
-        } catch (UnknownHostException e) {
-            logger.error("Cannot set host address to {}", value, e);
-        }
-
-        try {
-            if (this.refreshing != null) {
-                stopRefreshing();
-                ensureRefreshing();
-            }
-        } catch (IOException e) {
-            logger.error("Cannot restart DreamScreen refresh on new host address {}", value, e);
-        }
-    }
-
-    private boolean isValidStateMsg(final byte[] buf, int off, int len) {
-        if (isValidMsg(buf, off, len)) {
-            final int upperCommand = buf[off + 4];
-            final int lowerCommand = buf[off + 5];
-
-            return upperCommand == 0x01 && lowerCommand == 0x0A;
-        }
-        return false;
-    }
-
-    private boolean isValidMsg(final byte[] buf, int off, int len) {
-        if (len > 6 && buf[off] == (byte) 0xFC) {
-            final int msgLen = buf[off + 1] & 0xFF;
+    private boolean isValidMsg(final byte[] data, int off, int len) {
+        if (len > 6 && data[off] == (byte) 0xFC) {
+            final int msgLen = data[off + 1] & 0xFF;
             if (msgLen + 2 > len) {
                 return false; // invalid length
-            } else if (buf[off + msgLen + 1] != calcCRC8(buf, off)) {
+            } else if (data[off + msgLen + 1] != calcCRC8(data, off)) {
                 return false; // invalid crc
             }
             return true;
@@ -179,34 +132,35 @@ class DreamScreenDatagramServer {
         return false; // message not long enough
     }
 
-    private boolean isDreamScreen(final byte[] buf, int off, int len) {
-        final int msgLen = buf[off + 1] & 0xFF;
-        final int productId = buf[off + msgLen];
+    private boolean isRefreshMsg(final byte[] data, int off, int len) {
+        if (len > 77) {
+            final int msgLen = data[off + 1] & 0xFF;
+            final int upperCommand = data[off + 4];
+            final int lowerCommand = data[off + 5];
+            final int productId = data[off + msgLen];
 
-        return msgLen > 77 && productId > 0 && productId <= 2;
+            return msgLen > 77 && upperCommand == 0x01 && lowerCommand == 0x0A && productId > 0 && productId <= 2;
+        }
+        return false;
     }
 
-    private void refreshDreamScreen(final byte[] buf, int off, int len, InetAddress address) {
-        final String name = new String(buf, off + 6, 16, StandardCharsets.UTF_8).trim();
+    private void processRefreshMsg(final byte[] data, int off, int len, InetAddress address) {
+        final String name = new String(data, off + 6, 16, StandardCharsets.UTF_8).trim();
         final DreamScreenHandler dreamScreen = this.dreamScreens.get(name);
 
         if (dreamScreen != null) {
-            dreamScreen.refreshState(buf, off, len, address);
+            dreamScreen.address = address;
+            dreamScreen.group = data[off + 38];
+            dreamScreen.processMessage(data, off, len);
         }
     }
 
-    void send(int group, int commandUpper, int commandLower, byte[] payload, InetAddress address) throws IOException {
-        send(group, 0b00010001, commandUpper, commandLower, payload, address);
-    }
-
-    void send(int group, int flags, int commandUpper, int commandLower, byte[] payload, InetAddress address)
-            throws IOException {
-        final DatagramSocket socket = new DatagramSocket();
-        try {
-            socket.setBroadcast(false);
-            socket.send(buildPacket(group, flags, commandUpper, commandLower, payload, address));
-        } finally {
-            socket.close();
+    private void processMessage(final byte[] data, int off, int len) {
+        final byte group = data[2];
+        for (DreamScreenHandler dreamscreen : this.dreamScreens.values()) {
+            if (group == 0 || dreamscreen.group == group) {
+                dreamscreen.processMessage(data, off, len);
+            }
         }
     }
 
@@ -215,18 +169,26 @@ class DreamScreenDatagramServer {
     }
 
     void broadcast(int group, int flags, int commandUpper, int commandLower, byte[] payload) throws IOException {
-        final DatagramSocket socket = new DatagramSocket(0, hostAddress);
-        try {
-            socket.setReuseAddress(true);
-            socket.setBroadcast(true);
-            socket.send(buildPacket(group, flags, commandUpper, commandLower, payload, broadcastAddress));
-        } finally {
-            socket.close();
+        send(group, flags, commandUpper, commandLower, payload, this.broadcastAddress);
+    }
+
+    void send(int group, int commandUpper, int commandLower, byte[] payload, InetAddress address) throws IOException {
+        send(group, 0b00010001, commandUpper, commandLower, payload, this.broadcastAddress);
+    }
+
+    void send(int group, int flags, int commandUpper, int commandLower, byte[] payload, InetAddress address)
+            throws IOException {
+        DatagramSocket socket = this.socket;
+        if (socket != null) {
+            byte[] msg = buildMsg(group, flags, commandUpper, commandLower, payload);
+            socket.send(new DatagramPacket(msg, msg.length, address, DREAMSCREEN_PORT));
+            // processMessage(msg, 0, msg.length);
+        } else {
+            logger.warn("Message not sent because the server is not running");
         }
     }
 
-    private DatagramPacket buildPacket(int group, int flags, int commandUpper, int commandLower, byte[] payload,
-            @Nullable InetAddress address) throws IOException {
+    private byte[] buildMsg(int group, int flags, int commandUpper, int commandLower, byte[] payload) {
         final byte[] msg = new byte[payload.length + 7];
         msg[0] = (byte) 0xFC;
         msg[1] = (byte) (0x05 + payload.length);
@@ -236,7 +198,7 @@ class DreamScreenDatagramServer {
         msg[5] = (byte) commandLower;
         System.arraycopy(payload, 0, msg, 6, payload.length);
         msg[payload.length + 6] = calcCRC8(msg, 0);
-        return new DatagramPacket(msg, msg.length, address, DREAMSCREEN_PORT);
+        return msg;
     }
 
     private static final byte calcCRC8(byte[] data, int off) {
@@ -248,5 +210,96 @@ class DreamScreenDatagramServer {
             cntr++;
         }
         return crc;
+    }
+
+    private boolean isServerRunning() {
+        final DatagramSocket socket = this.socket;
+        final Thread server = this.server;
+        return socket != null && !socket.isClosed() && server != null;
+    }
+
+    private void startServer() throws IOException {
+        final DatagramSocket socket = new DatagramSocket(DREAMSCREEN_PORT, hostAddress);
+        socket.setBroadcast(true);
+        socket.setReuseAddress(true);
+        this.socket = socket;
+
+        final Thread server = new Thread(this::runServer, "dreamscreen-tv");
+        server.setDaemon(true);
+        server.start();
+        this.server = server;
+    }
+
+    private void stopServer() {
+        final DatagramSocket socket = this.socket;
+        final Thread server = this.server;
+        if (socket != null && !socket.isClosed()) {
+            socket.close();
+        }
+        if (server != null) {
+            try {
+                server.join(5000);
+            } catch (InterruptedException e) {
+                logger.error("Failed to wait for server to stop", e);
+            }
+        }
+    }
+
+    void setNetworkAddressService(@NonNull NetworkAddressService networkAddressService) {
+        this.networkAddressService = networkAddressService;
+        networkAddressService.addNetworkAddressChangeListener(this);
+        try {
+            configureNetwork();
+        } catch (IOException e) {
+            logger.error("Unable to configure the network", e);
+        }
+    }
+
+    void unsetNetworkAddressService(@NonNull NetworkAddressService networkAddressService) {
+        networkAddressService.removeNetworkAddressChangeListener(this);
+        this.networkAddressService = null;
+    }
+
+    @Override
+    public void onChanged(List<@NonNull CidrAddress> added, List<@NonNull CidrAddress> removed) {
+        try {
+            configureNetwork();
+            if (!this.dreamScreens.isEmpty()) {
+                stopServer();
+                startServer();
+            }
+        } catch (IOException ioe) {
+            logger.error("Cannot configure new network settings", ioe);
+        }
+    }
+
+    private void configureNetwork() throws IOException {
+        final NetworkAddressService networkAddressService = this.networkAddressService;
+        if (networkAddressService == null) {
+            throw new IOException("No network address service found");
+        }
+        final String host = networkAddressService.getPrimaryIpv4HostAddress();
+        if (host == null) {
+            throw new IOException("No primary IPv4 host address could be found");
+        }
+        final InetAddress hostAddress = InetAddress.getByName(host);
+        this.hostAddress = hostAddress;
+
+        final String broadcast = networkAddressService.getConfiguredBroadcastAddress();
+        if (broadcast != null) {
+            this.broadcastAddress = InetAddress.getByName(broadcast);
+            return;
+        }
+
+        // no valid broadcast address configured. Try to determine a valid one to use
+        final byte[] address = hostAddress.getAddress();
+        final NetworkInterface net = NetworkInterface.getByInetAddress(hostAddress);
+        final int prefixLen = net.getInterfaceAddresses().get(0).getNetworkPrefixLength();
+        final int prefixIndex = prefixLen / 8;
+        address[prefixIndex] |= 0xFF >> ((prefixLen - prefixIndex * 8) % 8);
+        for (int i = prefixIndex + 1; i < address.length; i++) {
+            address[i] = (byte) 0xFF;
+        }
+        this.broadcastAddress = InetAddress.getByAddress(address);
     }
 }

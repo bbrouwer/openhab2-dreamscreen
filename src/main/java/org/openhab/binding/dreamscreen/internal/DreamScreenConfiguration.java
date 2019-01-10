@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2014,2018 by the respective copyright holders.
+ * Copyright (c) 2018-2019 by the respective copyright holders.
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information regarding copyright ownership.
@@ -15,7 +15,7 @@ package org.openhab.binding.dreamscreen.internal;
 /**
  * The {@link DreamScreenConfiguration} class contains fields mapping thing configuration parameters.
  *
- * @author Bruce Brouwer - Initial contribution
+ * @author Bruce Brouwer
  */
 public class DreamScreenConfiguration {
     public String name;
