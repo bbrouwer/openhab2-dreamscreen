@@ -27,7 +27,9 @@ public class DreamScreenBindingConstants {
     private static final String BINDING_ID = "dreamscreen";
 
     // List of all Thing Type UIDs
-    public static final ThingTypeUID THING_DREAMSCREEN = new ThingTypeUID(BINDING_ID, "dreamScreen");
+    public static final ThingTypeUID THING_TYPE_4K = new ThingTypeUID(BINDING_ID, "4k");
+    public static final ThingTypeUID THING_TYPE_HD = new ThingTypeUID(BINDING_ID, "hd");
+    public static final ThingTypeUID THING_TYPE_SIDEKICK = new ThingTypeUID(BINDING_ID, "sidekick");
 
     // List of all Channel ids
     public static final String CHANNEL_POWER = "power";

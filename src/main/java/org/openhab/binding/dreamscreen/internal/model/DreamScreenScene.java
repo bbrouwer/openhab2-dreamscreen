@@ -10,11 +10,11 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  */
-package org.openhab.binding.dreamscreen.internal;
+package org.openhab.binding.dreamscreen.internal.model;
 
 import org.eclipse.smarthome.core.library.types.DecimalType;
 
-enum DreamScreenScene {
+public enum DreamScreenScene {
     COLOR(0, -1),
     RANDOM_COLOR(1, 0),
     FIRESIDE(1, 1),
@@ -26,19 +26,27 @@ enum DreamScreenScene {
     POP(1, 7),
     ENCHANTED_FOREST(1, 8);
 
-    final byte ambientModeType;
-    final byte ambientScene;
+    public final byte ambientModeType;
+    public final byte ambientScene;
 
-    private DreamScreenScene(int deviceAmbientSceneType, int deviceAmbientScene) {
-        this.ambientModeType = (byte) deviceAmbientSceneType;
-        this.ambientScene = (byte) deviceAmbientScene;
+    private DreamScreenScene(int ambientModeType, int ambientScene) {
+        this.ambientModeType = (byte) ambientModeType;
+        this.ambientScene = (byte) ambientScene;
     }
 
-    static DreamScreenScene fromDevice(byte deviceAmbientSceneType, byte deviceAmbientScene) {
-        return DreamScreenScene.values()[deviceAmbientSceneType == 0 ? 0 : deviceAmbientScene + 1];
+    public static DreamScreenScene fromDevice(byte ambientModeType, byte ambientScene) {
+        return DreamScreenScene.values()[ambientModeType == 0 ? 0 : ambientScene + 1];
     }
 
-    static DreamScreenScene fromState(DecimalType state) {
+    public static DreamScreenScene fromDeviceScene(byte ambientScene) {
+        return DreamScreenScene.values()[ambientScene + 1];
+    }
+
+    static DreamScreenScene fromScene(byte ambientScene) {
+        return DreamScreenScene.values()[ambientScene + 1];
+    }
+
+    public static DreamScreenScene fromState(DecimalType state) {
         return DreamScreenScene.values()[state.intValue()];
     }
 

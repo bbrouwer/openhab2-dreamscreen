@@ -18,5 +18,7 @@ package org.openhab.binding.dreamscreen.internal;
  * @author Bruce Brouwer
  */
 public class DreamScreenConfiguration {
-    public String name;
+    public static final String SERIAL_NUMBER = "serialNumber";
+
+    public String serialNumber;
 }

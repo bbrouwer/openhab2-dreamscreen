@@ -10,16 +10,16 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  */
-package org.openhab.binding.dreamscreen.internal;
+package org.openhab.binding.dreamscreen.internal.model;
 
 import org.eclipse.smarthome.core.library.types.DecimalType;
 
-enum DreamScreenMode {
+public enum DreamScreenMode {
     VIDEO(1),
     MUSIC(2),
     AMBIENT(3);
 
-    final byte deviceMode;
+    public final byte deviceMode;
 
     private DreamScreenMode(int deviceMode) {
         this.deviceMode = (byte) deviceMode;

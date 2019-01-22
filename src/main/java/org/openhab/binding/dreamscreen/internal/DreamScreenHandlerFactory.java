@@ -12,22 +12,30 @@
  */
 package org.openhab.binding.dreamscreen.internal;
 
-import static org.openhab.binding.dreamscreen.internal.DreamScreenBindingConstants.THING_DREAMSCREEN;
+import static java.util.stream.Collectors.toSet;
+import static org.openhab.binding.dreamscreen.internal.DreamScreenBindingConstants.*;
 
-import java.util.Collections;
+import java.util.HashMap;
+import java.util.Hashtable;
+import java.util.Map;
 import java.util.Set;
+import java.util.stream.Stream;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
-import org.eclipse.smarthome.core.net.NetworkAddressService;
 import org.eclipse.smarthome.core.thing.Thing;
 import org.eclipse.smarthome.core.thing.ThingTypeUID;
+import org.eclipse.smarthome.core.thing.ThingUID;
 import org.eclipse.smarthome.core.thing.binding.BaseThingHandlerFactory;
 import org.eclipse.smarthome.core.thing.binding.ThingHandler;
 import org.eclipse.smarthome.core.thing.binding.ThingHandlerFactory;
-import org.osgi.service.component.ComponentContext;
+import org.eclipse.smarthome.core.thing.type.DynamicStateDescriptionProvider;
+import org.openhab.binding.dreamscreen.internal.handler.DreamScreen4kHandler;
+import org.openhab.binding.dreamscreen.internal.handler.DreamScreenHdHandler;
+import org.openhab.binding.dreamscreen.internal.handler.DreamScreenInputDescriptionProvider;
+import org.openhab.binding.dreamscreen.internal.handler.DreamScreenSidekickHandler;
+import org.osgi.framework.ServiceRegistration;
 import org.osgi.service.component.annotations.Component;
-import org.osgi.service.component.annotations.Reference;
 
 /**
  * The {@link DreamScreenHandlerFactory} is responsible for creating things and thing handlers.
@@ -37,17 +45,10 @@ import org.osgi.service.component.annotations.Reference;
 @NonNullByDefault
 @Component(configurationPid = "binding.dreamscreen", service = ThingHandlerFactory.class)
 public class DreamScreenHandlerFactory extends BaseThingHandlerFactory {
+    private static final Set<ThingTypeUID> SUPPORTED_THING_TYPES_UIDS = Stream
+            .of(THING_TYPE_HD, THING_TYPE_4K, THING_TYPE_SIDEKICK).collect(toSet());
 
-    private static final Set<ThingTypeUID> SUPPORTED_THING_TYPES_UIDS = Collections.singleton(THING_DREAMSCREEN);
-
-    private final DreamScreenDatagramServer server = new DreamScreenDatagramServer();
-    private @Nullable DreamScreenDynamicStateDescriptionProvider descriptionProvider;
-
-    @Override
-    protected void deactivate(ComponentContext componentContext) {
-        super.deactivate(componentContext);
-        server.deactivate();
-    };
+    private Map<ThingUID, @Nullable ServiceRegistration<?>> services = new HashMap<>();
 
     @Override
     public boolean supportsThingType(ThingTypeUID thingTypeUID) {
@@ -58,28 +59,33 @@ public class DreamScreenHandlerFactory extends BaseThingHandlerFactory {
     protected @Nullable ThingHandler createHandler(Thing thing) {
         final ThingTypeUID thingTypeUID = thing.getThingTypeUID();
 
-        if (THING_DREAMSCREEN.equals(thingTypeUID)) {
-            return new DreamScreenHandler(thing, this.server, this.descriptionProvider);
+        if (THING_TYPE_HD.equals(thingTypeUID)) {
+            return new DreamScreenHdHandler(thing, registerDescriptionProvider(thing.getUID()));
+        } else if (THING_TYPE_4K.equals(thingTypeUID)) {
+            return new DreamScreen4kHandler(thing, registerDescriptionProvider(thing.getUID()));
+        } else if (THING_TYPE_SIDEKICK.equals(thingTypeUID)) {
+            return new DreamScreenSidekickHandler(thing);
         }
-
         return null;
     }
 
-    @Reference
-    protected void setDynamicStateDescriptionProvider(DreamScreenDynamicStateDescriptionProvider provider) {
-        this.descriptionProvider = provider;
+    private DreamScreenInputDescriptionProvider registerDescriptionProvider(ThingUID thingUID) {
+        final DreamScreenInputDescriptionProvider description = new DreamScreenInputDescriptionProvider(thingUID);
+        this.services.put(thingUID,
+                bundleContext.registerService(DynamicStateDescriptionProvider.class, description, new Hashtable<>()));
+        return description;
     }
 
-    protected void unsetDynamicStateDescriptionProvider(DreamScreenDynamicStateDescriptionProvider provider) {
-        this.descriptionProvider = null;
-    }
-
-    @Reference
-    protected void setNetworkAddressService(NetworkAddressService networkAddressService) {
-        this.server.setNetworkAddressService(networkAddressService);
-    }
-
-    protected void unsetNetworkAddressService(NetworkAddressService networkAddressService) {
-        this.server.unsetNetworkAddressService(networkAddressService);
+    /**
+     * Removes the handler for the specific thing. This also handles disabling the discovery
+     * service when the bridge is removed.
+     */
+    @Override
+    protected void removeHandler(ThingHandler thingHandler) {
+        final @Nullable ServiceRegistration<?> reg = this.services.remove(thingHandler.getThing().getUID());
+        if (reg != null) {
+            reg.unregister();
+        }
+        super.removeHandler(thingHandler);
     }
 }

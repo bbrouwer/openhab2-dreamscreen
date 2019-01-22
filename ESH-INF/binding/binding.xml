@@ -4,7 +4,7 @@
 	xsi:schemaLocation="http://eclipse.org/smarthome/schemas/binding/v1.0.0 http://eclipse.org/smarthome/schemas/binding-1.0.0.xsd">
 
 	<name>DreamScreen Binding</name>
-	<description>Binding for the DreamScreen LED Backlight for TVs</description>
+	<description>Binding for DreamScreen devices</description>
 	<author>Bruce Brouwer</author>
 
 </binding:binding>
