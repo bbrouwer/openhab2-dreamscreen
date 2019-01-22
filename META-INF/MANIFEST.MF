@@ -22,5 +22,6 @@ Import-Package:
  org.eclipse.smarthome.core.util,
  org.osgi.service.component,
  org.osgi.framework,
+ org.osgi.util.tracker,
  org.slf4j
 Service-Component: OSGI-INF/*.xml
