@@ -23,6 +23,9 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.InetAddress;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -66,6 +69,10 @@ public abstract class DreamScreenBaseHandler extends BaseThingHandler {
 
     private @Nullable ServiceTracker<DreamScreenServer, DreamScreenServer> serverTracker;
     private @Nullable DreamScreenServer server;
+    private Queue<DreamScreenMessage> writes = new ConcurrentLinkedQueue<>();
+    private Queue<DreamScreenMessage> reads = new ConcurrentLinkedQueue<>();
+    private @Nullable ScheduledFuture<?> sending;
+    private boolean messagesPaused = false;
 
     protected int serialNumber;
     private @Nullable InetAddress address;
@@ -121,12 +128,17 @@ public abstract class DreamScreenBaseHandler extends BaseThingHandler {
     }
 
     public final boolean message(final DreamScreenMessage msg, final InetAddress address) {
-        if (msg instanceof SerialNumberMessage) {
-            return link(((SerialNumberMessage) msg).getSerialNumber(), address);
-        } else if (!address.equals(this.address)) {
-            return false;
+        pauseMessages();
+        try {
+            if (msg instanceof SerialNumberMessage) {
+                return link(((SerialNumberMessage) msg).getSerialNumber(), address);
+            } else if (!address.equals(this.address)) {
+                return false;
+            }
+            return processMsg(msg, address);
+        } finally {
+            resumeMessages();
         }
-        return processMsg(msg, address);
     }
 
     protected boolean processMsg(final DreamScreenMessage msg, final InetAddress address) {
@@ -149,7 +161,7 @@ public abstract class DreamScreenBaseHandler extends BaseThingHandler {
             logger.debug("Linking {} to {}", serialNumber, address);
             this.address = address;
 
-            delayedWrite(new RefreshMessage());
+            write(new RefreshMessage());
             return true;
         }
         return false;
@@ -161,19 +173,14 @@ public abstract class DreamScreenBaseHandler extends BaseThingHandler {
         modeRefresh(msg.getMode());
         colorRefresh(msg.getRed(), msg.getGreen(), msg.getBlue());
         this.ambientScene = msg.getScene(); // ambientSceneRefresh(msg.getScene());
-        delayedRead(new AmbientModeTypeMessage(this.group, this.ambientModeType));
+        read(new AmbientModeTypeMessage(this.group, this.ambientModeType));
         return true;
     }
 
     private void powerCommand(Command command) {
         if (command instanceof OnOffType) {
             logger.debug("Changing {} power to {}", this.serialNumber, command);
-            try {
-                write(new ModeMessage(this.group, command == ON ? powerOnMode.deviceMode : 0));
-            } catch (IOException e) {
-                logger.error("Error changing {} power state", this.serialNumber, e);
-                updateStatus(OFFLINE, COMMUNICATION_ERROR, "Cannot send power command");
-            }
+            write(new ModeMessage(this.group, command == ON ? powerOnMode.deviceMode : 0));
         } else if (command instanceof RefreshType) {
             updateState(CHANNEL_POWER, this.mode == 0 ? OFF : ON);
         }
@@ -182,14 +189,11 @@ public abstract class DreamScreenBaseHandler extends BaseThingHandler {
     private void modeCommand(Command command) {
         if (command instanceof DecimalType) {
             logger.debug("Changing {} mode to {}", this.serialNumber, command);
-            try {
-                final DreamScreenMode mode = DreamScreenMode.fromState((DecimalType) command);
-                if (this.mode != 0) {
-                    write(new ModeMessage(this.group, mode.deviceMode));
-                }
-            } catch (IOException e) {
-                logger.error("Error changing {} mode", this.serialNumber, e);
-                updateStatus(OFFLINE, COMMUNICATION_ERROR, "Cannot send mode command");
+            final DreamScreenMode mode = DreamScreenMode.fromState((DecimalType) command);
+            if (this.mode != 0) {
+                write(new ModeMessage(this.group, mode.deviceMode));
+            } else {
+                this.powerOnMode = mode;
             }
         } else if (command instanceof RefreshType) {
             updateState(CHANNEL_MODE,
@@ -203,7 +207,7 @@ public abstract class DreamScreenBaseHandler extends BaseThingHandler {
         if (msg.getMode() == AMBIENT.deviceMode) {
             DreamScreenScene updateToScene = this.newScene;
             if (updateToScene != null) {
-                delayedWrite(new AmbientModeTypeMessage(this.group, updateToScene.ambientModeType));
+                write(new AmbientModeTypeMessage(this.group, updateToScene.ambientModeType));
             }
         }
         return true;
@@ -225,21 +229,16 @@ public abstract class DreamScreenBaseHandler extends BaseThingHandler {
     private void sceneCommand(Command command) {
         if (command instanceof DecimalType) {
             logger.debug("Changing {} scene to {}", this.serialNumber, command);
-            try {
-                final DreamScreenScene scene = DreamScreenScene.fromState((DecimalType) command);
-                if (this.mode != AMBIENT.deviceMode) {
-                    this.newScene = scene;
-                    write(new ModeMessage(this.group, AMBIENT.deviceMode));
-                } else if (scene.ambientModeType != this.ambientModeType) {
-                    this.newScene = scene;
-                    write(new AmbientModeTypeMessage(this.group, scene.ambientModeType));
-                } else {
-                    this.newScene = null;
-                    write(new SceneMessage(this.group, scene.ambientScene));
-                }
-            } catch (IOException e) {
-                logger.error("Error changing {} scene", this.serialNumber, e);
-                updateStatus(OFFLINE, COMMUNICATION_ERROR, "Cannot send scene command");
+            final DreamScreenScene scene = DreamScreenScene.fromState((DecimalType) command);
+            if (this.mode != AMBIENT.deviceMode) {
+                this.newScene = scene;
+                write(new ModeMessage(this.group, AMBIENT.deviceMode));
+            } else if (scene.ambientModeType != this.ambientModeType) {
+                this.newScene = scene;
+                write(new AmbientModeTypeMessage(this.group, scene.ambientModeType));
+            } else {
+                this.newScene = null;
+                write(new SceneMessage(this.group, scene.ambientScene));
             }
         } else if (command instanceof RefreshType) {
             updateState(CHANNEL_SCENE, DreamScreenScene.fromDevice(this.ambientModeType, this.ambientScene).state());
@@ -255,7 +254,7 @@ public abstract class DreamScreenBaseHandler extends BaseThingHandler {
             if (msg.getAmbientModeType() == COLOR.ambientModeType) {
                 updateState(CHANNEL_SCENE, COLOR.state());
             } else {
-                delayedWrite(new SceneMessage(this.group, updateToScene.ambientScene));
+                write(new SceneMessage(this.group, updateToScene.ambientScene));
             }
         } else {
             updateState(CHANNEL_SCENE,
@@ -284,21 +283,15 @@ public abstract class DreamScreenBaseHandler extends BaseThingHandler {
             logger.debug("Changing {} color to {}", this.serialNumber, command);
             final HSBType color = (HSBType) command;
 
-            try {
-                write(buildColorMsg(color));
-                if (this.mode != AMBIENT.deviceMode) {
-                    this.newScene = COLOR;
-                    this.color = color;
-                    delayedWrite(new ModeMessage(this.group, AMBIENT.deviceMode));
-                } else if (this.ambientModeType != COLOR.ambientModeType) {
-                    this.newScene = COLOR;
-                    this.color = color;
-                    delayedWrite(new AmbientModeTypeMessage(this.group, COLOR.ambientModeType));
-                }
-            } catch (IOException e) {
-                logger.error("Unable to change {} color", this.serialNumber, e);
-                this.newScene = null;
-                updateStatus(OFFLINE, COMMUNICATION_ERROR, "Cannot send color command");
+            write(buildColorMsg(color));
+            if (this.mode != AMBIENT.deviceMode) {
+                this.newScene = COLOR;
+                this.color = color;
+                write(new ModeMessage(this.group, AMBIENT.deviceMode));
+            } else if (this.ambientModeType != COLOR.ambientModeType) {
+                this.newScene = COLOR;
+                this.color = color;
+                write(new AmbientModeTypeMessage(this.group, COLOR.ambientModeType));
             }
         } else if (command instanceof RefreshType) {
             updateState(CHANNEL_COLOR, this.color);
@@ -329,46 +322,75 @@ public abstract class DreamScreenBaseHandler extends BaseThingHandler {
         updateState(CHANNEL_COLOR, this.color);
     }
 
-    protected void read(final DreamScreenMessage msg) throws IOException {
-        final DreamScreenServer server = this.server;
-        final InetAddress address = this.address;
-        if (server != null && address != null) {
-            server.read(msg, address);
-        } else {
-            logger.warn("DreamScreen {} is not on-line", this.serialNumber);
+    protected void read(final DreamScreenMessage msg) {
+        this.reads.add(msg);
+        sendMessages(false);
+    }
+
+    protected void write(final DreamScreenMessage msg) {
+        this.writes.add(msg);
+        sendMessages(false);
+    }
+
+    private void pauseMessages() {
+        synchronized (this) {
+            final ScheduledFuture<?> sending = this.sending;
+            this.messagesPaused = true;
+            if (sending != null && !sending.isCancelled()) {
+                sending.cancel(false);
+            }
         }
     }
 
-    protected void delayedRead(final DreamScreenMessage msg) {
-        this.scheduler.schedule(() -> {
-            try {
-                read(msg);
-            } catch (IOException e) {
-                logger.error("Unable to send delayed read message {} to {}", msg, this.serialNumber, e);
-                updateStatus(OFFLINE, COMMUNICATION_ERROR, "Cannot send messag");
-            }
-        }, 10, TimeUnit.MILLISECONDS);
-    }
-
-    protected void write(final DreamScreenMessage msg) throws IOException {
-        final DreamScreenServer server = this.server;
-        final InetAddress address = this.address;
-        if (server != null && address != null) {
-            server.write(msg, address);
-        } else {
-            logger.warn("DreamScreen {} is not on-line", this.serialNumber);
+    private void resumeMessages() {
+        synchronized (this) {
+            this.messagesPaused = false;
+            sendMessages(true);
         }
     }
 
-    protected void delayedWrite(final DreamScreenMessage msg) {
-        this.scheduler.schedule(() -> {
-            try {
-                write(msg);
-            } catch (IOException e) {
-                logger.error("Unable to send delayed write message {} to {}", msg, this.serialNumber, e);
-                updateStatus(OFFLINE, COMMUNICATION_ERROR, "Cannot send messag");
+    private void sendMessages(final boolean delayed) {
+        synchronized (this) {
+            final ScheduledFuture<?> sending = this.sending;
+            if (!this.messagesPaused && (!this.writes.isEmpty() || !this.reads.isEmpty())) {
+                if (sending == null || sending.isCancelled()) {
+                    this.sending = this.scheduler.scheduleWithFixedDelay(this::sendMsg, delayed ? 15 : 0, 15,
+                            TimeUnit.MILLISECONDS);
+                }
             }
-        }, 10, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private void sendMsg() {
+        final DreamScreenServer server = this.server;
+        final InetAddress address = this.address;
+        if (server != null && address != null) {
+            synchronized (this) {
+                final ScheduledFuture<?> sending = this.sending;
+
+                if (!this.writes.isEmpty()) {
+                    final DreamScreenMessage msg = this.writes.poll();
+                    try {
+                        server.write(msg, address);
+                    } catch (IOException e) {
+                        logger.error("Unable to send write message {} to {}", msg, this.serialNumber, e);
+                        updateStatus(OFFLINE, COMMUNICATION_ERROR, "Cannot send message");
+                    }
+                } else if (!this.reads.isEmpty()) {
+                    final DreamScreenMessage msg = this.reads.poll();
+                    try {
+                        server.read(msg, address);
+                    } catch (IOException e) {
+                        logger.error("Unable to send read message {} to {}", msg, this.serialNumber, e);
+                        updateStatus(OFFLINE, COMMUNICATION_ERROR, "Cannot send message");
+                    }
+                } else if (sending != null) {
+                    sending.cancel(false);
+                }
+            }
+        } else {
+            logger.warn("DreamScreen {} is not on-line", this.serialNumber);
+        }
     }
 
     @Override

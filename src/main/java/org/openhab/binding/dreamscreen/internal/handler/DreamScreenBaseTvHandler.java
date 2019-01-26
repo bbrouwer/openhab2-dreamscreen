@@ -2,15 +2,12 @@ package org.openhab.binding.dreamscreen.internal.handler;
 
 import static org.openhab.binding.dreamscreen.internal.DreamScreenBindingConstants.CHANNEL_INPUT;
 
-import java.io.IOException;
 import java.net.InetAddress;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.smarthome.core.library.types.DecimalType;
 import org.eclipse.smarthome.core.thing.ChannelUID;
 import org.eclipse.smarthome.core.thing.Thing;
-import org.eclipse.smarthome.core.thing.ThingStatus;
-import org.eclipse.smarthome.core.thing.ThingStatusDetail;
 import org.eclipse.smarthome.core.types.Command;
 import org.eclipse.smarthome.core.types.RefreshType;
 import org.openhab.binding.dreamscreen.internal.message.DreamScreenMessage;
@@ -59,14 +56,8 @@ public class DreamScreenBaseTvHandler extends DreamScreenBaseHandler {
     private void inputCommand(Command command) {
         if (command instanceof DecimalType) {
             logger.debug("Changing input to {} of {}", command, this.serialNumber);
-            try {
-                byte newInput = ((DecimalType) command).byteValue();
-                write(new InputMessage(this.group, newInput));
-            } catch (IOException e) {
-                logger.error("Error changing input of {}", this.serialNumber, e);
-                updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
-                        "Cannot send input change command to " + this.serialNumber);
-            }
+            byte newInput = ((DecimalType) command).byteValue();
+            write(new InputMessage(this.group, newInput));
         } else if (command instanceof RefreshType) {
             updateState(CHANNEL_INPUT, new DecimalType(this.input));
         }
