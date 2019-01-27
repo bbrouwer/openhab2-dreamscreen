@@ -5,7 +5,7 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 @NonNullByDefault
 public class InputMessage extends DreamScreenMessage {
     static final byte COMMAND_UPPER = 0x03;
-    static final byte COMMAND_LOWER = 0x01;
+    static final byte COMMAND_LOWER = 0x20;
 
     protected InputMessage(final byte[] data, final int off) {
         super(data, off);

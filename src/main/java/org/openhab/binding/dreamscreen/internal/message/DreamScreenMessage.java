@@ -39,6 +39,8 @@ public abstract class DreamScreenMessage {
             return new RefreshMessage(data, off);
         } else if (ModeMessage.matches(data, off)) {
             return new ModeMessage(data, off);
+        } else if (InputMessage.matches(data, off)) {
+            return new InputMessage(data, off);
         } else if (ColorMessage.matches(data, off)) {
             return new ColorMessage(data, off);
         } else if (AmbientModeTypeMessage.matches(data, off)) {
