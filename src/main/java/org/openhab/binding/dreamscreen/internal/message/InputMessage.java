@@ -25,6 +25,6 @@ public class InputMessage extends DreamScreenMessage {
 
     @Override
     public String toString() {
-        return "Mode " + getInput();
+        return "Input " + getInput();
     }
 }

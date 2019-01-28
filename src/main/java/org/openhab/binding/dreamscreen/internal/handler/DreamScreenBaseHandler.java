@@ -354,7 +354,7 @@ public abstract class DreamScreenBaseHandler extends BaseThingHandler {
             final ScheduledFuture<?> sending = this.sending;
             if (!this.messagesPaused && (!this.writes.isEmpty() || !this.reads.isEmpty())) {
                 if (sending == null || sending.isCancelled()) {
-                    this.sending = this.scheduler.scheduleWithFixedDelay(this::sendMsg, delayed ? 15 : 0, 15,
+                    this.sending = this.scheduler.scheduleWithFixedDelay(this::sendMsg, delayed ? 15 : 0, 100,
                             TimeUnit.MILLISECONDS);
                 }
             }
